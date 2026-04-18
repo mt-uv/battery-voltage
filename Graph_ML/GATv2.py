@@ -28,24 +28,29 @@ def dual_collate(batch):
 
 
 class BaseGNN(nn.Module):
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, mlp_dropout=0.15):
         super().__init__()
         self.pool = global_mean_pool
         self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2), nn.ReLU(),
+            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(mlp_dropout),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(mlp_dropout),
             nn.Linear(hidden_dim // 2, 1),
         )
 
     def forward(self, g1, g2):
         x1 = self.encode(g1.x, g1.edge_index, g1.edge_attr, g1.batch)
         x2 = self.encode(g2.x, g2.edge_index, g2.edge_attr, g2.batch)
-        return self.mlp(x1 + x2).squeeze(1)
+        x = torch.cat((x1, x2), dim=1)
+        return self.mlp(x).view(-1)
 
 
 class GATv2(BaseGNN):
-    def __init__(self, in_dim, hidden_dim, edge_dim):
-        super().__init__(hidden_dim)
+    def __init__(self, in_dim, hidden_dim, edge_dim, dropout=0.15):
+        super().__init__(hidden_dim, mlp_dropout=dropout)
         self.edge_proj = nn.Linear(edge_dim, hidden_dim)
         self.encoder = nn.ModuleList([
             GATv2Conv(in_dim, hidden_dim, heads=4, concat=True, edge_dim=hidden_dim),
@@ -53,11 +58,14 @@ class GATv2(BaseGNN):
             GATv2Conv(4 * hidden_dim, hidden_dim, heads=4, concat=True, edge_dim=hidden_dim),
             GATv2Conv(4 * hidden_dim, hidden_dim, heads=1, concat=False, edge_dim=hidden_dim),
         ])
+        self.dropout = nn.Dropout(dropout)
 
     def encode(self, x, edge_index, edge_attr, batch):
         edge_attr = self.edge_proj(edge_attr)
         for conv in self.encoder:
-            x = F.relu(conv(x, edge_index, edge_attr))
+            x = conv(x, edge_index, edge_attr)
+            x = F.relu(x)
+            x = self.dropout(x)
         return self.pool(x, batch)
 
 
@@ -95,7 +103,7 @@ def test_dual(model, loader, device):
     )
 
 
-graphs, df_valid = joblib.load("dual_graph_dataset_.pkl") # load .pkl file
+graphs, df_valid = joblib.load("dual_graph_dataset_.pkl")
 train_graphs, test_graphs = stratified_split(graphs, df_valid)
 
 train_loader = DataLoader(train_graphs, batch_size=16, shuffle=True, collate_fn=dual_collate)
@@ -105,13 +113,16 @@ in_dim = train_graphs[0][0].x.shape[1]
 edge_dim = train_graphs[0][0].edge_attr.shape[1]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-model = GATv2(in_dim=in_dim, hidden_dim=128, edge_dim=edge_dim).to(device)
+model = GATv2(in_dim=in_dim, hidden_dim=128, edge_dim=edge_dim, dropout=0.15).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 for epoch in range(1, 101):
     train_mse = train_dual(model, train_loader, optimizer, device)
     mae, r2, mse, _, _ = test_dual(model, test_loader, device)
-    print(f"Epoch {epoch:03d} | Train MSE: {train_mse:.4f} | Test MSE: {mse:.4f} | Test MAE: {mae:.4f} | Test R²: {r2:.4f}")
+    print(
+        f"Epoch {epoch:03d} | Train MSE: {train_mse:.4f} | "
+        f"Test MSE: {mse:.4f} | Test MAE: {mae:.4f} | Test R²: {r2:.4f}"
+    )
 
 mae_tr, r2_tr, mse_tr, train_preds, train_targets = test_dual(model, train_loader, device)
 mae_te, r2_te, mse_te, test_preds, test_targets = test_dual(model, test_loader, device)
