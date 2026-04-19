@@ -84,9 +84,9 @@ This dataset augments node features with electronic descriptors (e.g., electrone
 
 ## B) Train RoBERTa regression model
 
-1. Provide `battery_robocrys_descriptions.csv`.
+1. Donwload `battery_robocrys_descriptions.csv` from figshare.
 2. Confirm `charge_discharge_pairs.xlsx` is available.
-3. download checkpoint from figshare to the working envirnoment before running `RoBERTa/finetune.py`.
+3. Download checkpoint from figshare to the working environment before running `RoBERTa/finetune.py`.
 4. Run:
 
 ```bash
@@ -101,4 +101,4 @@ python RoBERTa/finetune.py
 
 ## Notes
 
-- GPU-enabled environments are recommended for RoBERTa and MLIP workflows.
+- GPU-enabled environments are recommended.
